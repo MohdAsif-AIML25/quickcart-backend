@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: quickcart-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-quickcart}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quickcart_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-quickcart}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:

@@ -1,0 +1,37 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# User uploads (keep folder, ignore contents)
+uploads/*
+!uploads/.gitkeep
+
+# Databases and logs
+*.db
+*.sqlite3
+*.log
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+*.egg-info/

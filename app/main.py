@@ -19,3 +19,8 @@ from app.api.routes import admin_orders, admin_products, auth, cart, health, ord
 # ...
     app.include_router(orders.router)
     app.include_router(admin_orders.router)
+
+from fastapi.staticfiles import StaticFiles
+# ...at the end of create_app(), just before `return app`:
+settings.upload_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")

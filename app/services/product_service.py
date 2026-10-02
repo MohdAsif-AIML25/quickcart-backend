@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import NotFoundError
 from app.models import Product
 from app.schemas.product import PaginatedProducts, ProductCreate, ProductRead, ProductUpdate
+from app.services.cache_service import invalidate_product_cache
 
 
 def _escape_like(value: str) -> str:

@@ -1,9 +1,10 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Path, Query, Response
 
 from app.api.deps import DbSession
-from app.schemas.product import PaginatedProducts
+from app.models import Product
+from app.schemas.product import PaginatedProducts, ProductRead
 from app.services import cache_service, product_service
 
 router = APIRouter(prefix="/products", tags=["Products"])
@@ -28,3 +29,13 @@ def list_products(
     cache_service.set_cached_products(cache_key, result)
     response.headers["X-Cache"] = "MISS"
     return result
+
+
+@router.get(
+    "/{product_id}",
+    response_model=ProductRead,
+    summary="Get one active product",
+    responses={404: {"description": "Product not found"}},
+)
+def get_product(product_id: Annotated[int, Path(gt=0)], db: DbSession) -> Product:
+    return product_service.get_product_or_404(db, product_id, active_only=True)

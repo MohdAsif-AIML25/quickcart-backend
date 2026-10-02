@@ -1,4 +1,3 @@
-from anyio import notify_closing
 from fastapi import APIRouter, BackgroundTasks
 
 from app.api.deps import CurrentUser, DbSession
@@ -20,7 +19,6 @@ def checkout(user: CurrentUser, db: DbSession,background_tasks:BackgroundTasks) 
     order=order_service.checkout(db, user)
     background_tasks.add_task(
         notification_service.send_order_confirmation,order.id,user.email,str(order.total_amount)
-
     )
     return order
 

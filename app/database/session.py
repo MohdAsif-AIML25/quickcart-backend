@@ -1,13 +1,11 @@
 from collections.abc import Iterator
-from venv import create 
 from sqlalchemy import create_engine 
 from sqlalchemy.orm import Session,sessionmaker 
 from app.core.config import get_settings 
 
 engine=create_engine(
     get_settings().database_url,
-    poor_pre_ping=True,
-
+    pool_pre_ping=True,  # test each pooled connection before use
 )
 
 SessionLocal=sessionmaker(bind=engine,autoflush=False,expire_on_commit=False)

@@ -12,8 +12,8 @@ def rate_limiter(scope:str,limit:int,window_seconds:int)-> Callable[[Request], N
     """Fixed-window limiter: at most `limit` requests per IP per window."""
 
     def dependency(request:Request) -> None:
-        client_ip=request.client.host if request.client else "unkown"
-        key=f"ratelimit":{scope}:{client_ip}"
+        client_ip=request.client.host if request.client else "unknown"
+        key=f"ratelimit:{scope}:{client_ip}"
         try:
             pipe=redis_client.pipeline()
             pipe.incr(key)
@@ -26,7 +26,7 @@ def rate_limiter(scope:str,limit:int,window_seconds:int)-> Callable[[Request], N
 
         if count>limit:
             raise TooManyRequestsError(
-                f"Too many attempts.Try again in {retry_after} seconds."
+                f"Too many attempts. Try again in {retry_after} seconds.",
                 headers={"Retry-After":str(retry_after)},
             )
     return dependency

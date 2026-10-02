@@ -11,9 +11,15 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
-docker compose up -d db
-alembic upgrade head
+docker compose up -d          # PostgreSQL (5433) + Redis (6379)
+alembic upgrade head          # create the tables
 uvicorn app.main:app --reload
 ```
 
 Open http://127.0.0.1:8000/docs
+
+## Run the tests
+
+```powershell
+pytest
+```

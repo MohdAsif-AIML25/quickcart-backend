@@ -1,41 +1,41 @@
-from typing import Annotated 
-from fastapi import APIRouter,Depends 
-from fastapi.security import OAuth2PasswordRequestForm 
-from app.api.deps import currentUser,DbSession 
-from app.models import User 
-from app.schemas.auth import RefreshRequest,TokenPair,UserCreate,UserRead
-from app.services import auth_service 
+from typing import Annotated
 
-router=APIRouter(prefix="/auth",tags=["Auth"])
+from fastapi import Depends
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
 
-@router.post(
-    "/register",
-    response_model=UserRead,
-    status_code=201,
-    summary="Register a new User",
-    responses={409: {"description": "Email already registered"}},
-)
+from app.core.exceptions import ForbiddenError, UnauthorizedError
+from app.core.security import decode_token
+from app.database.session import get_db
+from app.models import User, UserRole
 
-def register(data:UserCreate,db:DbSession)->User:
-    return auth_service.register_user(db,data)
+# auto_error=False: we raise our own UnauthorizedError, so every 401 has the same JSON shape
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
-@router.post(
-    "/login",
-    response_model=TokenPair,
-    summary="Log in and receive access + refresh tokens",
-    description="OAuth2 form: put your **email** in the `username` field.",
-    responses={401: {"description": "Invalid credentials"}},
-)
-def login(form: Annotated[OAuth2PasswordRequestForm, Depends()], db: DbSession) -> TokenPair:
-    user = auth_service.authenticate_user(db, form.username, form.password)
-    return auth_service.issue_tokens(user)
+DbSession = Annotated[Session, Depends(get_db)]
 
 
-@router.post("/refresh", response_model=TokenPair, summary="Exchange a refresh token for new tokens")
-def refresh(data: RefreshRequest, db: DbSession) -> TokenPair:
-    return auth_service.refresh_tokens(db, data.refresh_token)
-
-
-@router.get("/me", response_model=UserRead, summary="Get the current user")
-def me(user: CurrentUser) -> User:
+def get_current_user(
+    token: Annotated[str | None, Depends(oauth2_scheme)], db: DbSession
+) -> User:
+    """Authentication: who is calling? (valid access token -> active user)"""
+    if token is None:
+        raise UnauthorizedError("Not authenticated")
+    user_id = decode_token(token, expected_type="access")
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise UnauthorizedError("User not found or inactive")
     return user
+
+
+CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def require_admin(user: CurrentUser) -> User:
+    """Authorization: is this user allowed to do it?"""
+    if user.role != UserRole.ADMIN.value:
+        raise ForbiddenError("Admin access required")
+    return user
+
+
+AdminUser = Annotated[User, Depends(require_admin)]

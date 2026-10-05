@@ -10,7 +10,7 @@ from app.database.session import get_db
 from app.models import User, UserRole
 
 # auto_error=False: we raise our own UnauthorizedError, so every 401 has the same JSON shape
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
 DbSession = Annotated[Session, Depends(get_db)]
 

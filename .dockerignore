@@ -1,0 +1,22 @@
+# Secrets must never be baked into an image
+.env
+.env.*
+!.env.example
+
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+
+uploads
+tests
+docs
+scripts
+frontend
+*.md

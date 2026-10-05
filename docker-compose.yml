@@ -1,3 +1,7 @@
+# Local development stack.
+#   Only the databases (you run uvicorn --reload yourself):  docker compose up -d db redis
+#   The full stack, API included:                            docker compose up -d --build
+
 services:
   db:
     image: postgres:16-alpine
@@ -27,5 +31,28 @@ services:
       timeout: 3s
       retries: 10
 
+  api:
+    build: .
+    image: quickcart-api:local
+    container_name: quickcart-api
+    env_file:
+      - .env
+    environment:
+      # Inside the Compose network, containers reach each other by SERVICE NAME
+      # and the container port (5432), not by localhost:5433.
+      # These two lines override the localhost values from .env.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-quickcart}:${POSTGRES_PASSWORD:-quickcart_dev_password}@db:5432/${POSTGRES_DB:-quickcart}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy   # wait until PostgreSQL accepts connections
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres_data:
+  uploads_data:

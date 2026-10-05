@@ -1,0 +1,72 @@
+# Production stack for a single server (for example one AWS EC2 instance).
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+#                      ┌─────────────── private Docker network ───────────────┐
+#   Internet ──:80──▶  web (nginx) ──/api/──▶ api (FastAPI) ──▶ db, redis
+#                      └── serves the built React files
+#
+# Only "web" publishes a port. The API, PostgreSQL and Redis cannot be reached
+# from the internet at all: every request must pass through nginx.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env.prod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env.prod}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    image: quickcart-api:prod
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env.prod}
+      # nginx removes the /api prefix before forwarding. This tells FastAPI that
+      # the public address still starts with /api, so Swagger at /api/docs works.
+      UVICORN_ROOT_PATH: /api
+      # Trust the X-Forwarded-For header, so the rate limiter sees the visitor's
+      # address instead of nginx's. Safe ONLY because this service publishes no
+      # port: nothing except nginx can connect to it.
+      FORWARDED_ALLOW_IPS: "*"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    image: quickcart-web:prod
+    restart: unless-stopped
+    ports:
+      - "80:80"   # the only door into the stack
+    depends_on:
+      api:
+        condition: service_healthy   # nginx must be able to resolve and reach "api"
+
+volumes:
+  postgres_data:
+  uploads_data:

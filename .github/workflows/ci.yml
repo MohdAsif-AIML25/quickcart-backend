@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch cancels the older, now useless run
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+
+    # Real PostgreSQL and Redis, started next to the job. The checkout race
+    # test needs real row locks, so SQLite or mocks would prove nothing.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: quickcart
+          POSTGRES_PASSWORD: quickcart_ci_password
+          POSTGRES_DB: quickcart_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U quickcart -d quickcart_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://quickcart:quickcart_ci_password@localhost:5432/quickcart_test
+      TEST_REDIS_URL: redis://localhost:6379/15
+      # Throwaway value for CI only. The real secret lives on the server, never in Git.
+      JWT_SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test with coverage
+        run: pytest --cov --cov-report=term-missing --cov-fail-under=85
+
+  frontend:
+    name: Frontend lint and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend   # every "run" step below starts in this folder
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci   # exact versions from package-lock.json
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  docker:
+    name: Build Docker images
+    runs-on: ubuntu-latest
+    needs: [test, frontend]   # do not waste time building images from failing code
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build API image
+        run: docker build -t quickcart-api:${{ github.sha }} .
+
+      - name: Build web image
+        run: docker build -t quickcart-web:${{ github.sha }} ./frontend

@@ -26,6 +26,7 @@ class OrderItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
+    product_name: Mapped[str] = mapped_column(String(200))  # name snapshot
     quantity: Mapped[int]
     unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))  # price snapshot
 

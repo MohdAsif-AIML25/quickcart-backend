@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BadRequestError, ConflictError
 from app.models import CartItem, Order, OrderItem, Product, User
+from app.services.cache_service import invalidate_product_cache
 
 logger = logging.getLogger("quickcart.orders")
 
@@ -45,7 +46,12 @@ def checkout(db: Session, user: User) -> Order:
                 )
             product.stock -= item.quantity
             order.items.append(
-                OrderItem(product_id=product.id, quantity=item.quantity, unit_price=product.price)
+                OrderItem(
+                    product_id=product.id,
+                    product_name=product.name,  # snapshot: a later rename must not change this order
+                    quantity=item.quantity,
+                    unit_price=product.price,  # snapshot: a later price change must not either
+                )
             )
             total += product.price * item.quantity
 
@@ -58,6 +64,7 @@ def checkout(db: Session, user: User) -> Order:
         raise
 
     db.refresh(order)
+    invalidate_product_cache()  # stock changed -> cached product listings are stale
     logger.info("order_created", extra={"order_id": order.id, "user_id": user.id})
     return order
 

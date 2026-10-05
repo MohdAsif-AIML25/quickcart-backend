@@ -1,0 +1,22 @@
+# pytest is configured in pytest.ini. This file configures coverage and ruff.
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["alembic/versions", "frontend"]
+
+[tool.ruff.lint]
+# E/W = style errors, F = real bugs (unused imports, undefined names), I = import order
+select = ["E", "W", "F", "I"]
+
+[tool.ruff.lint.isort]
+# The local "alembic/" folder makes ruff think the alembic package is our own code
+known-third-party = ["alembic"]

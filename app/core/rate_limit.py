@@ -1,10 +1,12 @@
-import logging 
-from collections.abc import Callable 
-from fastapi import Request 
-from redis.exceptions import RedisError 
-from app.core.config import get_settings 
-from app.core.exceptions import TooManyRequestsError 
-from app.core.redis_client import redis_client 
+import logging
+from collections.abc import Callable
+
+from fastapi import Request
+from redis.exceptions import RedisError
+
+from app.core.config import get_settings
+from app.core.exceptions import TooManyRequestsError
+from app.core.redis_client import redis_client
 
 logger=logging.getLogger("quickcart.rate_limit")
 
@@ -22,7 +24,7 @@ def rate_limiter(scope:str,limit:int,window_seconds:int)-> Callable[[Request], N
             retry_after=max(redis_client.ttl(key), 1) if count > limit else 0
         except RedisError:
             logger.warning("rate_limit_unavailable",extra={"scope":scope})
-            return 
+            return
 
         if count>limit:
             raise TooManyRequestsError(

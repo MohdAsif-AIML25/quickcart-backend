@@ -3,7 +3,7 @@ from fastapi import APIRouter, BackgroundTasks
 from app.api.deps import CurrentUser, DbSession
 from app.models import Order
 from app.schemas.order import OrderRead
-from app.services import order_service, notification_service
+from app.services import notification_service, order_service
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 

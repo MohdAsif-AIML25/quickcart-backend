@@ -1,5 +1,7 @@
-from decimal import Decimal 
-from pydantic import BaseModel,Field 
+from decimal import Decimal
+
+from pydantic import BaseModel, Field
+
 MAX_QUANTITY_PER_ITEM=100
 
 class CartItemAdd(BaseModel):
@@ -8,13 +10,13 @@ class CartItemAdd(BaseModel):
 
 class CartItemRead(BaseModel):
     id: int
-    product_id: int 
-    product_name: str 
-    unit_price: Decimal 
-    quantity: int 
-    subtotal: Decimal 
+    product_id: int
+    product_name: str
+    unit_price: Decimal
+    quantity: int
+    subtotal: Decimal
 
 class CartRead(BaseModel):
     items: list[CartItemRead]
-    total_items: int 
+    total_items: int
     total_amount: Decimal

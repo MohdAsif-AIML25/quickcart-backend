@@ -1,6 +1,7 @@
-from datetime import datetime 
-from sqlalchemy import DateTime,MetaData,func 
-from sqlalchemy.orm import DeclarativeBase,Mapped,mapped_column
+from datetime import datetime
+
+from sqlalchemy import DateTime, MetaData, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Predictable constraint names -> clean, reviewable Alembic migrations
 NAMING_CONVENTION = {

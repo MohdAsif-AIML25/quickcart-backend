@@ -1,6 +1,7 @@
-from datetime import datetime 
-from typing import Literal 
-from pydantic import BaseModel,ConfigDict,EmailStr,Field,field_validator
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class UserCreate(BaseModel):

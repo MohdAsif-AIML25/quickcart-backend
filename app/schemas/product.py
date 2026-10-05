@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Price = Annotated[Decimal, Field(gt=0, max_digits=10, decimal_places=2, examples=["1499.00"])]
 
@@ -53,6 +53,16 @@ class ProductUpdate(BaseModel):
     @classmethod
     def normalize_category(cls, value: str | None) -> str | None:
         return value.strip().lower() if value is not None else value
+
+    @model_validator(mode="after")
+    def reject_explicit_null(self) -> "ProductUpdate":
+        # "Field not sent" and "field sent as null" both arrive here as None.
+        # model_fields_set tells them apart: it holds only the fields the client sent.
+        # These columns are NOT NULL, so an explicit null must be a 422, not a database error.
+        for field in ("name", "price", "stock", "category", "is_active"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        return self
 
 
 class ProductRead(BaseModel):

@@ -15,7 +15,10 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
-        description="E-commerce backend: auth, product catalogue, cart, checkout and orders.",
+        description=(
+            "E-commerce backend: auth, product catalogue, cart, checkout and order management. "
+            "Payment is Cash on Delivery only: no payment gateway is integrated."
+        ),
     )
     register_exception_handlers(app)
 

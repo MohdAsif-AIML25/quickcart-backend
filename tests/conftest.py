@@ -173,3 +173,37 @@ def create_product(client: TestClient, admin_headers: AuthHeaders) -> Callable[.
         return response.json()
 
     return _create_product
+
+
+@pytest.fixture
+def checkout_body() -> dict:
+    """A valid POST /orders/checkout body. Each test gets its own copy to change."""
+    return {
+        "shipping_address": {
+            "recipient_name": "Asha Verma",
+            "phone": "+91 98765 43210",
+            "address_line1": "221B MG Road",
+            "address_line2": "Near City Mall",
+            "city": "Bengaluru",
+            "state": "Karnataka",
+            "postal_code": "560001",
+            "country": "India",
+        },
+        "payment_method": "cod",
+    }
+
+
+@pytest.fixture
+def place_order(client: TestClient, checkout_body: dict) -> Callable[..., dict]:
+    """Factory: put one product in the buyer's cart, check out, return the order JSON."""
+
+    def _place_order(headers: AuthHeaders, product_id: int, quantity: int = 1) -> dict:
+        added = client.post(
+            "/cart/items", json={"product_id": product_id, "quantity": quantity}, headers=headers
+        )
+        assert added.status_code == 201, added.text
+        response = client.post("/orders/checkout", json=checkout_body, headers=headers)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    return _place_order

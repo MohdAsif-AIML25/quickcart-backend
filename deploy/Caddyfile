@@ -1,0 +1,17 @@
+# Caddy terminates HTTPS and passes every request to nginx (the "web" service).
+# SITE_ADDRESS comes from the env file, for example: shop.example.com
+#
+# For a public domain name Caddy obtains and renews a Let's Encrypt certificate
+# automatically. For "localhost" it uses its own local certificate authority,
+# which is how the stack is rehearsed on a laptop.
+
+{$SITE_ADDRESS} {
+	encode gzip
+
+	# Browsers remember for one year that this site must be opened with https
+	header Strict-Transport-Security "max-age=31536000"
+
+	# Caddy sets X-Forwarded-For (the visitor's address) and X-Forwarded-Proto
+	# itself and discards any value the visitor sent, so they cannot be faked.
+	reverse_proxy web:80
+}

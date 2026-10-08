@@ -1,12 +1,11 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import Alert from '../components/Alert.jsx'
 import { useCart } from '../context/cart.js'
 import { formatMoney } from '../format.js'
 
 export default function CartPage() {
-  const { cart, addItem, removeItem, checkout } = useCart()
-  const navigate = useNavigate()
+  const { cart, addItem, removeItem } = useCart()
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -22,14 +21,6 @@ export default function CartPage() {
     } finally {
       setBusy(false)
     }
-  }
-
-  async function handleCheckout() {
-    const order = await run(checkout)
-    if (order) {
-      navigate('/orders', { state: { placedOrderId: order.id } })
-    }
-    // On failure (409: someone else bought the last unit) the cart was re-read, so it shows the truth.
   }
 
   if (cart.items.length === 0) {
@@ -107,9 +98,10 @@ export default function CartPage() {
         <Link to="/" className="btn btn-ghost">
           Continue shopping
         </Link>
-        <button type="button" className="btn btn-primary" disabled={busy} onClick={handleCheckout}>
-          {busy ? 'Please wait…' : 'Place order'}
-        </button>
+        {/* The order is placed on the next page, after the address and payment method */}
+        <Link to="/checkout" className="btn btn-primary">
+          Proceed to checkout
+        </Link>
       </div>
     </>
   )

@@ -44,9 +44,9 @@ export default function CartProvider({ children }) {
     [refresh],
   )
 
-  const checkout = useCallback(async () => {
+  const checkout = useCallback(async (data) => {
     try {
-      return await api.checkout()
+      return await api.checkout(data)
     } finally {
       // Success empties the cart; failure (409) may mean the stock changed. Re-read either way.
       await refresh().catch(() => {})

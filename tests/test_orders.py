@@ -28,14 +28,15 @@ def _stock(db: Session, product_id: int) -> int:
 
 
 def test_checkout_creates_order_reduces_stock_and_empties_cart(
-    client: TestClient, db: Session, user_headers: dict, create_product: Callable[..., dict]
+    client: TestClient, db: Session, user_headers: dict, create_product: Callable[..., dict],
+    checkout_body: dict,
 ) -> None:
     mouse = create_product(name="Mouse", price="799.00", stock=10)
     cable = create_product(name="Cable", price="149.50", stock=5)
     _add(client, user_headers, mouse["id"], quantity=2)
     _add(client, user_headers, cable["id"], quantity=1)
 
-    response = client.post("/orders/checkout", headers=user_headers)
+    response = client.post("/orders/checkout", json=checkout_body, headers=user_headers)
 
     assert response.status_code == 201
     order = response.json()
@@ -48,8 +49,8 @@ def test_checkout_creates_order_reduces_stock_and_empties_cart(
     assert client.get("/cart", headers=user_headers).json()["items"] == []
 
 
-def test_checkout_with_empty_cart_returns_400(client: TestClient, user_headers: dict) -> None:
-    response = client.post("/orders/checkout", headers=user_headers)
+def test_checkout_with_empty_cart_returns_400(client: TestClient, user_headers: dict, checkout_body: dict) -> None:
+    response = client.post("/orders/checkout", json=checkout_body, headers=user_headers)
 
     assert response.status_code == 400
     assert response.json()["error"]["message"] == "Cart is empty"
@@ -68,6 +69,7 @@ def test_failed_checkout_rolls_back_everything(
     admin_headers: dict,
     user_headers: dict,
     create_product: Callable[..., dict],
+    checkout_body: dict,
 ) -> None:
     """One item is out of stock -> NOTHING changes (atomic: all or nothing)."""
     mouse = create_product(name="Mouse", stock=10)
@@ -77,7 +79,7 @@ def test_failed_checkout_rolls_back_everything(
     # Stock drops after the item was added to the cart
     client.patch(f"/admin/products/{cable['id']}", json={"stock": 1}, headers=admin_headers)
 
-    response = client.post("/orders/checkout", headers=user_headers)
+    response = client.post("/orders/checkout", json=checkout_body, headers=user_headers)
 
     assert response.status_code == 409
     assert "Insufficient stock" in response.json()["error"]["message"]
@@ -88,13 +90,14 @@ def test_failed_checkout_rolls_back_everything(
 
 
 def test_checkout_fails_if_product_was_deactivated(
-    client: TestClient, admin_headers: dict, user_headers: dict, create_product: Callable[..., dict]
+    client: TestClient, admin_headers: dict, user_headers: dict, create_product: Callable[..., dict],
+    checkout_body: dict,
 ) -> None:
     product = create_product()
     _add(client, user_headers, product["id"])
     client.delete(f"/admin/products/{product['id']}", headers=admin_headers)
 
-    response = client.post("/orders/checkout", headers=user_headers)
+    response = client.post("/orders/checkout", json=checkout_body, headers=user_headers)
 
     assert response.status_code == 409
     assert "no longer available" in response.json()["error"]["message"]
@@ -104,13 +107,14 @@ def test_checkout_fails_if_product_was_deactivated(
 
 
 def test_order_keeps_the_name_and_price_paid_after_the_product_changes(
-    client: TestClient, admin_headers: dict, user_headers: dict, create_product: Callable[..., dict]
+    client: TestClient, admin_headers: dict, user_headers: dict, create_product: Callable[..., dict],
+    checkout_body: dict,
 ) -> None:
     """An order is a historical record: it shows what the customer bought, at
     the price they paid, whatever happens to the product afterwards."""
     product = create_product(name="Wireless Mouse", price="799.00")
     _add(client, user_headers, product["id"])
-    client.post("/orders/checkout", headers=user_headers)
+    client.post("/orders/checkout", json=checkout_body, headers=user_headers)
 
     client.patch(
         f"/admin/products/{product['id']}",
@@ -129,12 +133,13 @@ def test_order_keeps_the_name_and_price_paid_after_the_product_changes(
 
 
 def test_users_see_only_their_own_orders(
-    client: TestClient, make_user: Callable[..., dict], create_product: Callable[..., dict]
+    client: TestClient, make_user: Callable[..., dict], create_product: Callable[..., dict],
+    checkout_body: dict,
 ) -> None:
     alice, bob = make_user(), make_user()
     product = create_product()
     _add(client, alice, product["id"])
-    client.post("/orders/checkout", headers=alice)
+    client.post("/orders/checkout", json=checkout_body, headers=alice)
 
     assert len(client.get("/orders/me", headers=alice).json()) == 1
     assert client.get("/orders/me", headers=bob).json() == []
@@ -145,12 +150,13 @@ def test_admin_can_list_all_orders_but_user_cannot(
     admin_headers: dict,
     make_user: Callable[..., dict],
     create_product: Callable[..., dict],
+    checkout_body: dict,
 ) -> None:
     alice, bob = make_user(), make_user()
     product = create_product()
     for buyer in (alice, bob):
         _add(client, buyer, product["id"])
-        client.post("/orders/checkout", headers=buyer)
+        client.post("/orders/checkout", json=checkout_body, headers=buyer)
 
     admin_view = client.get("/admin/orders", headers=admin_headers)
 
@@ -164,14 +170,15 @@ def test_admin_can_list_all_orders_but_user_cannot(
 
 
 def test_checkout_invalidates_the_product_cache(
-    client: TestClient, user_headers: dict, create_product: Callable[..., dict]
+    client: TestClient, user_headers: dict, create_product: Callable[..., dict],
+    checkout_body: dict,
 ) -> None:
     product = create_product(stock=10)
     client.get("/products")
     assert client.get("/products").headers["X-Cache"] == "HIT"
     _add(client, user_headers, product["id"], quantity=3)
 
-    client.post("/orders/checkout", headers=user_headers)
+    client.post("/orders/checkout", json=checkout_body, headers=user_headers)
     listing = client.get("/products")
 
     assert listing.headers["X-Cache"] == "MISS"
@@ -179,7 +186,8 @@ def test_checkout_invalidates_the_product_cache(
 
 
 def test_checkout_schedules_order_confirmation(
-    client: TestClient, user_headers: dict, create_product: Callable[..., dict], monkeypatch
+    client: TestClient, user_headers: dict, create_product: Callable[..., dict], monkeypatch,
+    checkout_body: dict,
 ) -> None:
     sent: list[tuple] = []
     monkeypatch.setattr(
@@ -188,7 +196,7 @@ def test_checkout_schedules_order_confirmation(
     product = create_product(price="799.00")
     _add(client, user_headers, product["id"])
 
-    order = client.post("/orders/checkout", headers=user_headers).json()
+    order = client.post("/orders/checkout", json=checkout_body, headers=user_headers).json()
 
     assert sent == [(order["id"], "user1@example.com", "799.00")]
 
@@ -200,7 +208,7 @@ def test_confirmation_log_masks_the_email_address() -> None:
 # --- Concurrency ------------------------------------------------------------
 
 
-def _checkout_in_parallel(buyers: list[dict]) -> list[int]:
+def _checkout_in_parallel(buyers: list[dict], body: dict) -> list[int]:
     """Send one checkout per buyer at the same moment; return the status codes."""
     barrier = threading.Barrier(len(buyers))
     statuses: list[int] = []
@@ -209,7 +217,7 @@ def _checkout_in_parallel(buyers: list[dict]) -> list[int]:
     def buy(headers: dict) -> None:
         thread_client = TestClient(app)  # one client per thread
         barrier.wait(timeout=10)  # all threads are released together
-        response = thread_client.post("/orders/checkout", headers=headers)
+        response = thread_client.post("/orders/checkout", json=body, headers=headers)
         with lock:
             statuses.append(response.status_code)
 
@@ -222,7 +230,8 @@ def _checkout_in_parallel(buyers: list[dict]) -> list[int]:
 
 
 def test_concurrent_checkouts_never_oversell(
-    client: TestClient, db: Session, make_user: Callable[..., dict], create_product: Callable[..., dict]
+    client: TestClient, db: Session, make_user: Callable[..., dict], create_product: Callable[..., dict],
+    checkout_body: dict,
 ) -> None:
     """8 buyers race for 3 units: exactly 3 win, 5 get 409, stock ends at 0.
 
@@ -235,7 +244,7 @@ def test_concurrent_checkouts_never_oversell(
     for buyer in buyers:
         _add(client, buyer, product["id"])
 
-    statuses = _checkout_in_parallel(buyers)
+    statuses = _checkout_in_parallel(buyers, checkout_body)
 
     assert sorted(statuses) == [201] * stock + [409] * (buyer_count - stock)
     assert _stock(db, product["id"]) == 0  # never negative
@@ -245,7 +254,8 @@ def test_concurrent_checkouts_never_oversell(
 
 
 def test_concurrent_checkouts_of_overlapping_products_do_not_deadlock(
-    client: TestClient, db: Session, make_user: Callable[..., dict], create_product: Callable[..., dict]
+    client: TestClient, db: Session, make_user: Callable[..., dict], create_product: Callable[..., dict],
+    checkout_body: dict,
 ) -> None:
     """Buyers add the same two products in OPPOSITE order.
 
@@ -259,7 +269,7 @@ def test_concurrent_checkouts_of_overlapping_products_do_not_deadlock(
         for product in order:
             _add(client, buyer, product["id"])
 
-    statuses = _checkout_in_parallel(buyers)
+    statuses = _checkout_in_parallel(buyers, checkout_body)
 
     assert statuses == [201] * 6
     assert _stock(db, first["id"]) == 44

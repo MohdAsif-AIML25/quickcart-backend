@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { api } from '../api/client.js'
 import Alert from '../components/Alert.jsx'
-import { formatDate, formatMoney } from '../format.js'
+import OrderDetails from '../components/OrderDetails.jsx'
+import { formatDate, formatMoney, ORDER_STATUS_LABELS } from '../format.js'
 
 export default function OrdersPage() {
   const location = useLocation()
@@ -29,7 +30,11 @@ export default function OrdersPage() {
   return (
     <>
       <h1>Your orders</h1>
-      {placedOrderId && <Alert type="success">Order #{placedOrderId} is confirmed. Thank you!</Alert>}
+      {placedOrderId && (
+        <Alert type="success">
+          Order #{placedOrderId} is confirmed. Pay in cash when it is delivered. Thank you!
+        </Alert>
+      )}
       <Alert>{error}</Alert>
 
       {!orders && !error && <p className="muted">Loading orders…</p>}
@@ -45,10 +50,12 @@ export default function OrdersPage() {
           <header className="order-header">
             <div>
               <h2>Order #{order.id}</h2>
-              <span className="muted">{formatDate(order.created_at)}</span>
+              <span className="muted">Placed {formatDate(order.created_at)}</span>
             </div>
             <div className="order-summary">
-              <span className="tag tag-static">{order.status}</span>
+              <span className={`tag tag-static status-${order.status}`}>
+                {ORDER_STATUS_LABELS[order.status] ?? order.status}
+              </span>
               <span className="total">{formatMoney(order.total_amount)}</span>
             </div>
           </header>
@@ -63,6 +70,7 @@ export default function OrdersPage() {
               </li>
             ))}
           </ul>
+          <OrderDetails order={order} />
         </section>
       ))}
     </>

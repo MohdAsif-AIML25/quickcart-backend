@@ -28,11 +28,13 @@ export const tokens = {
 }
 
 export class ApiError extends Error {
-  constructor(status, message, code) {
+  constructor(status, message, code, fields = {}) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    // Validation errors only: { field name: message }, so a form can mark each input
+    this.fields = fields
   }
 }
 
@@ -58,10 +60,18 @@ async function toApiError(response) {
   }
   // 2. FastAPI validation errors (422): {"detail": [{"loc": [...], "msg": "..."}]}
   if (Array.isArray(body?.detail) && body.detail.length > 0) {
+    const fields = {}
+    for (const item of body.detail) {
+      const name = item.loc?.[item.loc.length - 1]
+      // Pydantic puts "Value error, " in front of messages written in our own validators
+      const text = item.msg.replace(/^Value error, /, '')
+      if (typeof name === 'string' && !(name in fields)) fields[name] = text
+    }
     const first = body.detail[0]
     const field = first.loc?.[first.loc.length - 1]
-    const message = typeof field === 'string' ? `${field}: ${first.msg}` : first.msg
-    return new ApiError(response.status, message, 'validation_error')
+    const firstText = first.msg.replace(/^Value error, /, '')
+    const message = typeof field === 'string' ? `${field}: ${firstText}` : firstText
+    return new ApiError(response.status, message, 'validation_error', fields)
   }
   if (response.status === 413) {
     return new ApiError(413, 'The file is too large.', 'payload_too_large')
@@ -157,7 +167,8 @@ export const api = {
   addToCart: (productId, quantity = 1) =>
     request('/cart/items', { method: 'POST', json: { product_id: productId, quantity } }),
   removeCartItem: (itemId) => request(`/cart/items/${itemId}`, { method: 'DELETE' }),
-  checkout: () => request('/orders/checkout', { method: 'POST' }),
+  // data: { shipping_address: {...}, payment_method: 'cod' }
+  checkout: (data) => request('/orders/checkout', { method: 'POST', json: data }),
   myOrders: () => request('/orders/me'),
 
   // --- Admin ---
@@ -170,6 +181,9 @@ export const api = {
     return request(`/admin/products/${id}/image`, { method: 'POST', formData })
   },
   listAllOrders: ({ page = 1, limit = 20 } = {}) => request(`/admin/orders?page=${page}&limit=${limit}`),
+  // changes: { status } and/or { estimated_delivery_date } (null clears the date)
+  updateOrder: (id, changes) => request(`/admin/orders/${id}`, { method: 'PATCH', json: changes }),
+  deleteOrder: (id) => request(`/admin/orders/${id}`, { method: 'DELETE' }),
 }
 
 // The API returns image paths such as "/uploads/products/abc.png".

@@ -3,6 +3,7 @@ import Navbar from './components/Navbar.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
 import AdminPage from './pages/AdminPage.jsx'
 import CartPage from './pages/CartPage.jsx'
+import CheckoutPage from './pages/CheckoutPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import NotFoundPage from './pages/NotFoundPage.jsx'
 import OrdersPage from './pages/OrdersPage.jsx'
@@ -23,6 +24,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <CartPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/checkout"
+            element={
+              <ProtectedRoute>
+                <CheckoutPage />
               </ProtectedRoute>
             }
           />

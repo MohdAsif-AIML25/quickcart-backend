@@ -384,3 +384,7 @@ The GitHub Actions workflow runs on pushes to `main` and on pull requests. It ru
 - Redis-dependent catalogue/login behavior is documented as fail-open; during a Redis outage, caching and login rate limiting can be unavailable. Readiness may still report Redis as down.
 - Deployment is manual. Automated delivery, off-server backup/recovery tests, and production monitoring are future improvements.
 - AWS free-tier eligibility and credits depend on the account. Monitor billing; stopping containers does not stop instance charges, and retained storage can still incur charges after EC2 is stopped.
+
+## License
+
+Released under the [MIT License](LICENSE).

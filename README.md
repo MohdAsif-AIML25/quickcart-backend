@@ -1,6 +1,6 @@
 # QuickCart
 
-[![CI](https://github.com/MohdAsif-AIML25/quickcart-backend/actions/workflows/ci.yml/badge.svg?branch=feature%2Faws-deployment)](https://github.com/MohdAsif-AIML25/quickcart-backend/actions/workflows/ci.yml)
+[![CI](https://github.com/MohdAsif-AIML25/quickcart-backend/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MohdAsif-AIML25/quickcart-backend/actions/workflows/ci.yml)
 
 A full-stack e-commerce application built with **FastAPI, React, PostgreSQL and Redis**, deployed on **AWS EC2 using Docker Compose**.
 
@@ -107,7 +107,7 @@ docker compose -f docker-compose.yml up -d --build
 docker compose -f docker-compose.yml ps
 ```
 
-Run commands individually and stop if one fails. Expected local addresses from the documented development Compose configuration:
+Run commands individually and stop if one fails. Local addresses configured in `docker-compose.yml`:
 
 | Resource | Address |
 |---|---|
@@ -165,7 +165,7 @@ docker compose up -d db redis
 docker compose ps
 ```
 
-Match `.env` connection settings to the actual published ports; the provided local setup documents PostgreSQL on port 5433 and Redis on 6379. Then:
+For Python running on your laptop, configure `.env` to reach PostgreSQL at `localhost:5433` and Redis at `localhost:6379`. Inside Docker, Compose instead configures the API to use service names `db:5432` and `redis:6379`. Then:
 
 ```powershell
 alembic upgrade head
@@ -353,7 +353,7 @@ npm run build
 
 Test coverage described by the project includes concurrent checkout, duplicate submission, stock restoration, transaction rollback, ownership, role checks, status transitions, migrations, and historical item snapshots. Use the latest pytest output for the current test count and results; this README does not assert a fresh test run.
 
-The GitHub Actions workflow defines backend lint/tests, frontend lint/build, and Docker image builds. See [ci.yml](.github/workflows/ci.yml) for the exact branch triggers and [Actions](https://github.com/MohdAsif-AIML25/quickcart-backend/actions) for execution results. CI checks do not by themselves deploy changes to EC2.
+The GitHub Actions workflow runs on pushes to `main` and on pull requests. It runs backend lint/tests with an 85% minimum coverage gate, frontend lint/build, and then Docker image builds after those checks pass. A direct push to `feature/aws-deployment` does not trigger this workflow unless it also updates an open pull request. The badge at the top reports `main`, not the deployment branch. See [ci.yml](.github/workflows/ci.yml) and [Actions](https://github.com/MohdAsif-AIML25/quickcart-backend/actions) for configuration and execution results. CI checks do not by themselves deploy changes to EC2.
 
 ## Design decisions
 

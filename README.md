@@ -385,6 +385,24 @@ The GitHub Actions workflow runs on pushes to `main` and on pull requests. It ru
 - Deployment is manual. Automated delivery, off-server backup/recovery tests, and production monitoring are future improvements.
 - AWS free-tier eligibility and credits depend on the account. Monitor billing; stopping containers does not stop instance charges, and retained storage can still incur charges after EC2 is stopped.
 
+## Author
+
+Designed and built by [Mohammad Asif](https://github.com/MohdAsif-AIML25).
+
+## Acknowledgements
+
+QuickCart is built on these open-source projects and services, and on their documentation:
+
+| Area | Tools and technology |
+|---|---|
+| API | [FastAPI](https://fastapi.tiangolo.com/), [Uvicorn](https://www.uvicorn.org/), [Pydantic](https://docs.pydantic.dev/) |
+| Data | [PostgreSQL](https://www.postgresql.org/docs/16/), [SQLAlchemy 2.0](https://docs.sqlalchemy.org/en/20/), [Alembic](https://alembic.sqlalchemy.org/), [psycopg](https://www.psycopg.org/), [Redis](https://redis.io/docs/) |
+| Frontend | [React](https://react.dev/), [Vite](https://vite.dev/), [nginx](https://nginx.org/en/docs/) |
+| Quality | [pytest](https://docs.pytest.org/), [Ruff](https://docs.astral.sh/ruff/), [GitHub Actions](https://docs.github.com/actions) |
+| Deployment | [Docker Compose](https://docs.docker.com/compose/), [AWS EC2](https://docs.aws.amazon.com/ec2/) on Amazon Linux 2023 |
+
+The checkout design follows PostgreSQL's documented [row-level locking](https://www.postgresql.org/docs/16/explicit-locking.html#LOCKING-ROWS) (`SELECT ... FOR UPDATE`) to prevent overselling under concurrent orders.
+
 ## License
 
 Released under the [MIT License](LICENSE).

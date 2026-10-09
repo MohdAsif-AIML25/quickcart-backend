@@ -1,5 +1,7 @@
 # Production stack for a single server (for example one AWS EC2 instance).
-#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+# This file is a COMPLETE stack (not an override of docker-compose.yml).
+#   HTTP only:   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#   With HTTPS:  add  -f docker-compose.https.yml  (see that file and docs/aws-deployment.md)
 #
 #                      ┌─────────────── private Docker network ───────────────┐
 #   Internet ──:80──▶  web (nginx) ──/api/──▶ api (FastAPI) ──▶ db, redis
@@ -8,10 +10,18 @@
 # Only "web" publishes a port. The API, PostgreSQL and Redis cannot be reached
 # from the internet at all: every request must pass through nginx.
 
+# Without a limit, container logs grow until the server's disk is full.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env.prod}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
@@ -27,6 +37,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -37,6 +48,7 @@ services:
     build: .
     image: quickcart-api:prod
     restart: unless-stopped
+    logging: *default-logging
     environment:
       ENVIRONMENT: production
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
@@ -61,6 +73,7 @@ services:
     build: ./frontend
     image: quickcart-web:prod
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "80:80"   # the only door into the stack
     depends_on:

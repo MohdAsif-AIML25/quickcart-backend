@@ -1,0 +1,41 @@
+# HTTPS for the production stack. This file is an OVERRIDE: it is only valid
+# together with docker-compose.prod.yml, which is a complete stack on its own.
+#
+#   HTTP only  (first test, no domain yet):  -f docker-compose.prod.yml
+#   HTTPS      (public use):                 -f docker-compose.prod.yml -f docker-compose.https.yml
+#
+#   Internet ──:80/:443──▶ caddy ──▶ web (nginx) ──/api/──▶ api ──▶ db, redis
+#
+# Caddy gets a certificate from Let's Encrypt for SITE_ADDRESS, renews it by
+# itself, and redirects http:// to https://. nginx keeps its job (React files
+# and the /api proxy) but is no longer reachable from the internet directly.
+
+services:
+  web:
+    ports: !reset []   # remove "80:80": only Caddy publishes ports now
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"         # needed for the certificate challenge and the redirect to https
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS (your domain name) in the env file}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # certificates and keys: must survive container recreation
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:

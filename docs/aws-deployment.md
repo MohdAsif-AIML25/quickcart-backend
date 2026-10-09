@@ -1,325 +1,477 @@
-# Deploying QuickCart to AWS
+# QuickCart — AWS Deployment and Operations
 
-This guide puts the whole stack (React frontend, API, PostgreSQL, Redis) on **one EC2 instance**
-with Docker Compose. It is the cheapest and simplest deployment that is still
-real: a public URL, containers that restart on failure, secrets kept off GitHub.
+> For normal use, start at “3. Connect from your laptop” below. Do not launch another instance, recreate secrets, or overwrite swap just to reopen the website.
 
-```text
-Your laptop ──git push──▶ GitHub
-                             │ git clone / git pull
-                             ▼
-Internet ──HTTP :80──▶ EC2 instance (Ubuntu, Docker)
-                       ├── web    (nginx: serves the React app, forwards /api/ to api)
-                       ├── api    (FastAPI, not reachable from the internet)
-                       ├── db     (PostgreSQL, not reachable from the internet)
-                       └── redis  (not reachable from the internet)
+## Architecture: how the running application works
+
+```mermaid
+flowchart TD
+    browser["Customer or admin browser"]
+    subgraph ec2["AWS EC2 — Amazon Linux 2023"]
+        host["Security group — public HTTP port 80"]
+        subgraph network["Private Docker network"]
+            web["web — nginx and built React files"]
+            api["api — FastAPI and Uvicorn, port 8000"]
+            db["db — PostgreSQL 16, port 5432"]
+            redis["redis — Redis 7, port 6379"]
+        end
+        pgvol[("postgres_data volume")]
+        images[("uploads_data volume")]
+    end
+    browser -->|"HTTP requests"| host
+    host --> web
+    web -->|"API requests: remove /api prefix"| api
+    api -->|"Users, products, carts and orders"| db
+    api -->|"Cache and rate limits"| redis
+    api -->|"Image files at /app/uploads"| images
+    db --> pgvol
 ```
 
-**Why this design and not ECS, RDS, and a load balancer?** Those are the right
-tools for a production system with real traffic, but each one costs money every
-hour and adds a week of learning. For a portfolio project, one server proves the
-same skills (Docker, networking, secrets, deployment) for almost nothing. The
-last section shows the upgrade path, which you should be able to *explain* in an
-interview even if you have not built it.
+React JavaScript runs in the visitor's browser. nginx delivers the built files and proxies API requests. Only nginx publishes an application port on the EC2 host; the database, Redis and API are reached inside Docker. SSH port 22 is separate administrative access to the host.
 
----
-
-## Before you start: cost
-
-Read this section first. AWS bills by the hour for whatever is running.
-
-- **New accounts (created on or after 15 July 2025)** get USD 100 in credits at
-  sign-up and can earn up to USD 100 more. On the *free plan* you cannot be
-  charged, but the account closes automatically when the credits run out or
-  after six months, whichever comes first.
-- **Older accounts** get the classic 12-month free tier with monthly limits.
-- `t3.micro` is free-tier eligible for both kinds of account.
-- A public IPv4 address is billed per hour (about USD 0.005). It is small, but
-  it is why an instance you forgot about still costs money.
-
-Do these two things today:
-
-1. In the AWS console, open **Billing and Cost Management → Budgets** and create
-   a monthly cost budget of USD 5 with an email alert.
-2. **Stop the instance** when you are not showing the project to anyone.
-   **Terminate** it when you no longer need it.
-
----
-
-## Step 1: Launch the EC2 instance
-
-In the AWS console, pick a region close to you (for example **Asia Pacific
-(Mumbai) ap-south-1**), then go to **EC2 → Instances → Launch instances**.
-
-| Setting | Value |
+| Example request | Route and result |
 |---|---|
-| Name | `quickcart-server` |
-| AMI | Ubuntu Server 24.04 LTS |
-| Instance type | `t3.micro` |
-| Key pair | Create new → name `quickcart-key` → RSA → `.pem` → download it and keep it safe |
-| Storage | 20 GiB, gp3 |
+| `GET /` | nginx returns the frontend HTML and assets |
+| `GET /cart` | nginx returns the React app; React displays the cart page |
+| `GET /api/products` | nginx forwards `/products` to FastAPI; FastAPI uses Redis/PostgreSQL |
+| `POST /api/orders/checkout` | FastAPI validates authentication and checkout data, then writes the order transaction |
+| `GET /api/docs` | FastAPI generates Swagger, which loads `/api/openapi.json` |
 
-**Network settings → Edit → Security group rules.** A security group is the
-instance's firewall. Add exactly these two inbound rules:
+In the production Compose file, `UVICORN_ROOT_PATH=/api` supports the external prefix. `FORWARDED_ALLOW_IPS="*"` trusts forwarded headers in this private proxy arrangement; reconsider that trust if API access or network membership changes. nginx must overwrite the forwarded client headers.
 
-| Type | Port | Source | Why |
-|---|---|---|---|
-| SSH | 22 | **My IP** | Only you can log in to the server |
-| HTTP | 80 | Anywhere (0.0.0.0/0) | Everyone can reach the shop |
+### How code reaches AWS
 
-Do **not** open ports 5432 (PostgreSQL) or 6379 (Redis). The database must
-never be reachable from the internet.
-
-Click **Launch instance**. When its state is *Running*, copy its
-**Public IPv4 address**. It is written as `YOUR_IP` below.
-
-## Step 2: Connect to the server
-
-**Easiest (works in the browser):** select the instance → **Connect** →
-**EC2 Instance Connect** → **Connect**.
-
-**From PowerShell on your laptop:**
-
-```powershell
-ssh -i "$HOME\Downloads\quickcart-key.pem" ubuntu@YOUR_IP
+```mermaid
+flowchart TD
+    laptop["Laptop — edit and test source"] -->|"Commit and push"| github["GitHub repository"]
+    github -->|"Pull reviewed deployment branch"| repo["EC2 project checkout"]
+    repo --> apibuild["Build Python API image"]
+    repo --> webbuild["Build React and nginx image"]
+    apibuild --> compose["Docker Compose recreates changed services"]
+    webbuild --> compose
+    compose --> api["API startup applies Alembic migrations"]
+    compose --> web["nginx serves built frontend"]
 ```
 
-If Windows says *"UNPROTECTED PRIVATE KEY FILE"*, restrict the file to your user:
+GitHub stores source code. Docker images package executable code and dependencies. PostgreSQL records and uploaded image files live in separate persistent volumes. Pushing a commit does not automatically deploy this project; the current workflow requires a server pull and rebuild.
 
-```powershell
-icacls "$HOME\Downloads\quickcart-key.pem" /inheritance:r /grant:r "$($env:USERNAME):(R)"
-```
+### Why local products are missing on AWS
 
-If the connection times out later, your home IP address has probably changed.
-Edit the SSH rule in the security group and choose **My IP** again.
+Your laptop and EC2 are two separate computers with separate databases. Cloning the repository creates no copy of your local catalogue, accounts, orders, or uploaded files. Transfer both the required database records and their images, or create demonstration products again. See section 9 before importing anything.
 
-## Step 3: Install Docker on the server
+## Setup reference: what was done already
 
-Run these on the server. They are the official Docker instructions for Ubuntu.
+This is a record for understanding and future rebuilds, not a command list to rerun on the existing server.
+
+1. An EC2 instance was launched in `us-east-1`, with Amazon Linux 2023 and a `t3.micro` instance type. The root disk reported about 8 GiB; monitor free space because builds and backups consume it.
+2. SSH access was configured with the new laptop key and regional EC2 Instance Connect access. A separate HTTP rule allows the website.
+3. Docker and Git were installed, and Docker was enabled at boot:
 
 ```bash
-sudo apt update
-sudo apt install -y ca-certificates curl git
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-
-sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
-Types: deb
-URIs: https://download.docker.com/linux/ubuntu
-Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
-Components: stable
-Architectures: $(dpkg --print-architecture)
-Signed-By: /etc/apt/keyrings/docker.asc
-EOF
-
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo dnf install -y docker git
+sudo systemctl enable --now docker
 ```
 
-Allow your user to run Docker without `sudo`, then log out and back in:
+4. Docker Compose was installed separately as a system-wide CLI plugin. Version `v5.5.0` was confirmed during your deployment. Do not assume `dnf install docker` also installs Compose. For a new server, follow the official manual plugin installation instructions linked under References and select the correct release/architecture.
+5. A 1 GiB swap file was created and enabled. Reboot persistence has not been confirmed. Swap can help with memory pressure but does not guarantee successful builds.
+6. The GitHub repository was cloned into `/home/ec2-user/quickcart-backend`, using branch `feature/aws-deployment`.
+7. A private `.env.prod` file was created. Its variables are `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `JWT_SECRET_KEY`, and optional `SITE_ADDRESS` for future HTTPS. The current database URL requires a URL-safe password; the setup used random hexadecimal characters. Do not change an initialized database's password by merely editing this file.
+8. API and frontend images were built separately, then started with the standalone production Compose file. API startup ran Alembic migrations.
+9. Health and readiness returned HTTP 200, with PostgreSQL and Redis reported up.
+
+For a genuinely new server, clone the correct branch with:
 
 ```bash
-sudo usermod -aG docker ubuntu
-exit
-```
-
-Reconnect and check:
-
-```bash
-docker --version
-docker compose version
-```
-
-### Add swap (important on t3.micro)
-
-`t3.micro` has 1 GiB of memory. Building the image while PostgreSQL is running
-can run out of memory and freeze the server. A swap file prevents that:
-
-```bash
-sudo fallocate -l 1G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-free -h      # the Swap row should show 1.0Gi
-```
-
-## Step 4: Get the code and create the secrets
-
-```bash
-git clone https://github.com/MohdAsif-AIML25/quickcart-backend.git
+git clone --branch feature/aws-deployment --single-branch https://github.com/MohdAsif-AIML25/quickcart-backend.git
 cd quickcart-backend
-cp .env.prod.example .env.prod
 ```
 
-Generate two random values:
+On the existing server, use `cd ~/quickcart-backend` instead. Do not clone another nested copy.
 
-```bash
-python3 -c "import secrets; print('JWT_SECRET_KEY=' + secrets.token_urlsafe(48))"
-python3 -c "import secrets; print('POSTGRES_PASSWORD=' + secrets.token_hex(24))"
-```
-
-Open the file with `nano .env.prod`, paste both values over the placeholders,
-and save (Ctrl+O, Enter, Ctrl+X). Then make the file readable only by you:
+Before building a new setup, fill `.env.prod` privately using `.env.prod.example` as the template, then verify:
 
 ```bash
 chmod 600 .env.prod
+git check-ignore .env.prod
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod config --quiet
 ```
 
-`.env.prod` exists **only on the server**. It is listed in `.gitignore`, so it
-can never be pushed to GitHub. Use new values here, not the ones from your
-laptop.
+Never overwrite the existing `.env.prod` during a routine update. Avoid sharing unrestricted `docker compose config` output because it can contain resolved secrets. The `--quiet` form validates without displaying the configuration.
 
-## Step 5: Start the stack
+## Reading this guide
 
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
-```
+Every operational command below says which computer or prompt it belongs to. Run commands one at a time; stop on an error rather than pasting the remaining steps. The original project files are authoritative if paths, services, or branches change later.
 
-The first build takes a few minutes. Then check:
+## 1. Your deployment
 
-```bash
-docker compose -f docker-compose.prod.yml ps        # four services "Up" and "healthy"
-curl http://localhost/api/health
-```
-
-From your laptop, open these in a browser. Use `http://`, not `https://`.
-
-| Address | What you should see |
+| Setting | Current value |
 |---|---|
-| `http://YOUR_IP/` | The QuickCart shop |
-| `http://YOUR_IP/api/docs` | Swagger, the API documentation |
+| Instance name | quickcart-demo |
+| Instance ID | i-0800f01a20ffa48f1 |
+| Region | us-east-1 |
+| OS / user | Amazon Linux 2023 / ec2-user |
+| Instance type | t3.micro |
+| Public IP at time of writing | 34.235.123.254 |
+| AWS project folder | /home/ec2-user/quickcart-backend |
+| Laptop project folder | D:\AI_Career\Pillar_2_Portfolio_Projects\prodcution_e_commerce\quickcart-backend |
+| Deployment branch | feature/aws-deployment |
+| Compose file | docker-compose.prod.yml (standalone stack) |
+| Server configuration | .env.prod (private; never commit) |
+| Services | web, api, db, redis |
 
-✅ **Checkpoint:** the shop loads from the public IP, you can sign up, and after
-Step 6 you can create a product on the Admin page and buy it.
+Public frontend: http://34.235.123.254/
 
-## Step 6: Create the first admin
+Public Swagger: http://34.235.123.254/api/docs
 
-Sign up in the shop (**Sign up** button), then promote that account on the server:
+Schema: http://34.235.123.254/api/openapi.json
 
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod exec db \
-  psql -U quickcart -d quickcart -c "UPDATE users SET role = 'admin' WHERE email = 'you@example.com';"
+The auto-assigned public IP can change after an EC2 stop/start. Check the instance's current IP before using these commands or links.
+
+## 2. Know which terminal you are using
+
+| Prompt | Where you are | What you run |
+|---|---|---|
+| `PS C:\...>` | Windows PowerShell on laptop | ssh, scp, local Git commands |
+| `[ec2-user@... ~]$` | AWS Linux home folder | cd, Docker, server Git commands |
+| `[ec2-user@... quickcart-backend]$` | AWS project folder | Production Compose commands |
+| `quickcart=#` or `quickcart=>` | PostgreSQL | SQL statements |
+
+Copy only commands, not the prompt. Paste one command once, check it, then press Enter. If an unfinished shell command shows `>`, press Ctrl+C and retry. In psql, use `\q` to exit.
+
+## 3. Connect from your laptop
+
+Run in Windows PowerShell:
+
+```powershell
+ssh -i "$env:USERPROFILE\quickcart-aws-new" ec2-user@34.235.123.254
 ```
 
-(If you changed `POSTGRES_USER` or `POSTGRES_DB` in `.env.prod`, use those names
-after `-U` and `-d`.)
+The private key stays on your laptop. Never paste its contents into chat, commit it, or copy it into the application.
 
-It should print `UPDATE 1`. Reload the shop: an **Admin** link appears in the
-navigation bar. (`scripts/promote_admin.py` refuses to run when
-`ENVIRONMENT=production`, on purpose, so the first admin is created with SQL.)
-
-## Step 7: Deploy a new version
-
-After you push new commits to GitHub:
+After connecting, run in AWS Linux:
 
 ```bash
 cd ~/quickcart-backend
-git pull
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
 
-Only the images whose files changed are rebuilt (`api`, `web`, or both). New
-Alembic migrations are applied automatically when the API starts. The database
-volume is untouched.
+Alternative: AWS Console → EC2 → quickcart-demo → Connect → EC2 Instance Connect. Choose the public IP and username `ec2-user`.
 
-## Everyday commands
+## 4. Security group rules
+
+Security group: `sg-05057ce3f5ebdbadc` (launch-wizard-1).
+
+| Type | Port | Source | Purpose |
+|---|---|---|---|
+| SSH | 22 | My IP, ending in /32 | Laptop SSH access |
+| SSH | 22 | EC2 Instance Connect range for this region | AWS browser terminal |
+| HTTP | 80 | 0.0.0.0/0 | Public website |
+
+The console showed `18.206.107.24/29` for Instance Connect during setup. Verify the currently advertised regional range when configuring it again. The laptop IP is dynamic: select My IP again when your internet connection changes.
+
+Keep all three rules separate. Do not replace SSH with HTTP. Do not expose PostgreSQL 5432, Redis 6379, or the API's 8000 port. Add HTTPS 443 when HTTPS is actually configured.
+
+## 5. Daily health checks
+
+Run these in AWS Linux, from `~/quickcart-backend`:
 
 ```bash
-# Tip: add this line to ~/.bashrc so you can type "dc ps", "dc logs api", ...
-alias dc='docker compose -f docker-compose.prod.yml --env-file .env.prod'
-
-dc ps                      # status
-dc logs -f api             # follow the API logs (Ctrl+C to stop)
-dc logs -f web             # nginx access log: every request from a browser
-dc restart api             # restart only the API
-dc down                    # stop everything; data volumes are KEPT
-dc exec -T db pg_dump -U quickcart quickcart > backup.sql   # backup the database to a file
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod ps
 ```
 
-Never run `dc down -v` unless you want to delete the database: `-v` removes the volumes.
+```bash
+curl -i --max-time 10 http://localhost/api/health
+```
 
-## Troubleshooting
+```bash
+curl -i --max-time 10 http://localhost/api/health/ready
+```
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Browser cannot reach `http://YOUR_IP/` | Port 80 is not open, or you typed `https://` | Check the security group's HTTP rule; use `http://` |
-| The shop loads but shows "Request failed (HTTP 502)" | nginx is up, the API is not | `dc ps`, then `dc logs api` |
-| `web` never starts | It waits until `api` is healthy | `dc logs api`; check the health path in the API `Dockerfile` |
-| SSH times out | Your home IP changed | Edit the SSH rule → **My IP** |
-| `required variable ... is missing` | Forgot `--env-file .env.prod` | Add the flag (or use the `dc` alias) |
-| `api` keeps restarting | The app failed at start-up | `dc logs api` and read the last error |
-| `password authentication failed` | You changed `POSTGRES_PASSWORD` after the first start. The old password is stored in the volume. | Put the original password back. On a server with no data to keep: `dc down -v`, then start again. |
-| Build is killed or the server freezes | Out of memory | Add the swap file from Step 3 |
-| The public IP changed | You stopped and started the instance | Use the new IP, or allocate an Elastic IP (billed while the instance is stopped) |
+Expected: HTTP 200; readiness reports database and Redis up. A running EC2 instance does not by itself prove the application is healthy.
 
-## Shutting down
+View recent logs:
 
-- **Stop** (EC2 → Instance state → Stop): the disk is kept, compute billing
-  stops, the public IP changes on the next start. The containers start again
-  automatically because of `restart: unless-stopped`.
-- **Terminate**: deletes the instance and its disk. Afterwards, check
-  **EC2 → Volumes** and **Elastic IPs** and delete anything left over.
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=100 api web
+```
 
----
+Check resources:
 
-## How the frontend is served
+```bash
+df -h /
+```
 
-The `web` container is built from `frontend/Dockerfile` in two stages: Node
-builds the React app into static files, then nginx serves them. The same nginx
-forwards every `/api/...` request to the `api` container
-(`frontend/nginx.conf`).
+```bash
+free -h
+```
+
+```bash
+sudo swapon --show
+```
+
+A 1 GiB swap file was enabled during setup. Persistence across reboot has not been confirmed; check it after reboot. Do not overwrite an active swap file.
+
+## 6. Start, restart, and stop the application
+
+Start with already-built images:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --no-build
+```
+
+Restart an existing API container:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod restart api
+```
+
+Restart does not apply edited source code or new Compose environment settings. Use the deployment steps below for changes.
+
+Stop the application only when you want the website offline:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod stop
+```
+
+Closing VS Code, Docker Desktop, PowerShell, or your laptop does not stop Docker on EC2. Stopping containers does not stop EC2 billing.
+
+Do not use `docker compose down -v` or volume-pruning commands as a troubleshooting shortcut: database and upload volumes contain your data.
+
+## 7. Safe access through an SSH tunnel
+
+Until HTTPS is configured, use the encrypted SSH tunnel for entering credentials or personal information. In a separate Windows PowerShell window:
+
+```powershell
+ssh -i "$env:USERPROFILE\quickcart-aws-new" -N -o ExitOnForwardFailure=yes -L 127.0.0.1:8080:127.0.0.1:80 ec2-user@34.235.123.254
+```
+
+No output is normal. Leave that window open.
+
+- Frontend: http://127.0.0.1:8080/
+- Swagger: http://127.0.0.1:8080/api/docs
+- Schema: http://127.0.0.1:8080/api/openapi.json
+
+Use `127.0.0.1` explicitly. During this session, `localhost` reached an IPv6 listener and Swagger requested the wrong schema path. Closing this tunnel only disables these local links; the public AWS website can continue running.
+
+## 8. Create and verify an admin
+
+First register a new account through the frontend or POST `/auth/register`. Choose your own unique password and store it privately. Registration normally creates a customer account.
+
+Then, in AWS Linux:
+
+```bash
+cd ~/quickcart-backend
+```
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+Wait for the PostgreSQL prompt. Run SQL there, not at the Linux prompt. Replace the email if you registered a different account:
+
+```sql
+UPDATE users
+SET role = 'admin'
+WHERE email = 'admin@example.com'
+RETURNING id, email, role;
+```
+
+`UPDATE 1` means one account was updated. `UPDATE 0` means no matching account exists; register or check the email first. If a table/column error appears, stop and inspect the schema before changing the command.
+
+Check:
+
+```sql
+SELECT id, email, role
+FROM users
+WHERE email = 'admin@example.com';
+```
+
+Exit:
 
 ```text
-GET http://YOUR_IP/               → nginx → index.html + JS + CSS
-GET http://YOUR_IP/cart           → nginx → index.html  (React Router shows the cart page)
-GET http://YOUR_IP/api/products   → nginx → http://api:8000/products
+\q
 ```
 
-This one decision removes three common deployment problems:
+Log out and log in again. In Swagger, Authorize → Logout → enter the email as username and the existing password. Leave client_id and client_secret empty. GET `/auth/me` should show `admin`.
 
-| Problem | Why it does not happen here |
-|---|---|
-| **CORS** errors | The page and the API share one origin, so the browser never makes a cross-origin request. |
-| **Mixed content** (an `https://` page calling an `http://` API) | Both are served through the same address and protocol. |
-| The API exposed to the internet | Only nginx publishes a port. The API has none. |
+Promotion does not change the password. The development `scripts.promote_admin` script refuses production use. Password hashes cannot be read back as original passwords.
 
-Two settings on the `api` service in `docker-compose.prod.yml` make it work behind nginx:
+## 9. Code, configuration, and data are separate
 
-- `UVICORN_ROOT_PATH=/api` tells FastAPI its public address starts with `/api`, so Swagger loads `/api/openapi.json`.
-- `FORWARDED_ALLOW_IPS=*` makes the API read the visitor's address from the
-  `X-Forwarded-For` header that nginx sets. Without it, every visitor would
-  appear to be nginx, and five login attempts by anyone would lock out everyone.
-
----
-
-## The upgrade path (know it, do not build it yet)
-
-This single-server design has real weaknesses. Be ready to name them and say
-what you would change:
-
-| Weakness today | Production answer | Why |
+| Item | Transfer method | GitHub? |
 |---|---|---|
-| Database on the same disk as the app, no automatic backups | **Amazon RDS for PostgreSQL** | Managed backups, patching, and failover |
-| Redis on the same server | **Amazon ElastiCache** | Managed, survives app-server replacement |
-| Images on a local volume | **Amazon S3** | Shared by every server, practically unlimited, durable |
-| One server; a deploy means a short outage | **ECR + ECS Fargate** behind an **Application Load Balancer** | Several copies of the API, rolling deploys, health-based replacement |
-| Plain HTTP | **ACM certificate** on the load balancer, plus a domain in Route 53 | HTTPS |
-| Frontend files served from the app server | **S3 + CloudFront** | Static files from a CDN close to the user; the server only handles API calls |
-| Secrets in a file on the server | **AWS Secrets Manager** or SSM Parameter Store | Encrypted, audited, rotated |
-| `git pull` by hand | GitHub Actions deploy job | Repeatable deployments |
-| Migrations run when the container starts | A separate one-off migration task | With several API copies, two would migrate at the same time |
+| app/, frontend/, migrations, Dockerfiles | Git push/pull and Docker rebuild | Yes |
+| .env.prod | Create/manage privately on AWS | No |
+| Products, users, carts, orders | PostgreSQL export/import | No |
+| Uploaded image files | Copy to the actual uploads volume | Usually no |
+| QuickCart_Product_Images/ | Optional source image collection | Only if appropriate to share |
+| Private SSH keys, database backups | Secure private storage | No |
+| .venv/, node_modules/ | Recreated by installs/builds | No |
 
-A good interview sentence: *"I deployed it on a single EC2 instance with Docker
-Compose to keep the cost near zero. The trade-off is that the database and the
-app share one machine, so in production I would move PostgreSQL to RDS and run
-the API on ECS behind a load balancer."*
+AWS has its own PostgreSQL and uploads volumes. Git clone does not copy local database records. Adding source images to GitHub does not link them to products automatically.
+
+Local product/image transfer is pending. Identify the local DB location and actual upload storage first. Back up AWS before import. A whole-database restore can replace new AWS accounts and orders; a catalogue-only migration should preserve those and handle product ID conflicts and image paths explicitly.
+
+## 10. Back up before a deployment or data import
+
+Run in AWS Linux from the project folder. These commands create private, dated backup files outside the Git repo:
+
+```bash
+umask 077
+mkdir -p ~/quickcart-backups
+backup_stamp=$(date +%Y%m%d-%H%M%S)
+```
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$HOME/quickcart-backups/database-$backup_stamp.dump"
+```
+
+Only if the dump command succeeds, inspect its archive directory:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T db pg_restore --list < "$HOME/quickcart-backups/database-$backup_stamp.dump"
+```
+
+Back up the uploaded image directory mounted inside the API container:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T api tar -C /app -czf - uploads > "$HOME/quickcart-backups/uploads-$backup_stamp.tar.gz"
+```
+
+```bash
+tar -tzf "$HOME/quickcart-backups/uploads-$backup_stamp.tar.gz"
+```
+
+These checks verify readable archives, not a full successful restore. Take backups during a quiet period with no uploads or catalogue changes for consistency. Keep a secure off-server copy too; a backup on the same disk does not protect against disk loss. Do not restore over production without reviewing what will be replaced and testing restore separately.
+
+## 11. Deploy later code changes
+
+First test the change locally and commit/push it to the intended deployment branch. Do not upload `.env`, passwords, keys, or backups.
+
+On AWS, back up first and check:
+
+```bash
+cd ~/quickcart-backend
+git status
+git branch --show-current
+git log -1 --oneline
+```
+
+Continue only if the branch is the intended one and the working tree has no unexplained edits. Current branch is `feature/aws-deployment`; revise this runbook if you later deploy main. Review the incoming changes and migrations on GitHub before pulling.
+
+```bash
+git pull --ff-only origin feature/aws-deployment
+```
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod config --quiet
+```
+
+No output on successful config validation is normal. Build one image at a time on this small instance. Continue only when each command succeeds:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod build api
+```
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod build web
+```
+
+```bash
+sudo docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --no-build
+```
+
+Repeat the health checks from section 5, then test login, catalogue, images, cart, and checkout. The deployed API startup command runs `alembic upgrade head`; review new migrations before deploying. A Git checkout alone does not roll back a database migration. Preserve the previous commit identifier and backups before updating.
+
+## 12. Troubleshooting reminder
+
+| Symptom | Check / next action |
+|---|---|
+| `.env.prod` not found | Run `cd ~/quickcart-backend`; do not create another env file in home |
+| `UPDATE: command not found` | You are in Bash; enter psql before running SQL |
+| SSH timeout | Check current EC2 IP/state and port 22 source rules |
+| PowerShell works, browser terminal fails | Check Instance Connect regional source rule and ec2-user username |
+| SSH Permission denied (publickey) | Check username, selected private key, and authorized_keys; timeout is a different problem |
+| Website times out | Check HTTP 80 rule, current public IP, then container status |
+| Swagger parser error with HTML | Check schema request URL; it must use /api/openapi.json, returning JSON |
+| `/api/docs.` gives 404 | Remove the trailing dot |
+| Email already registered (409) | Log in; don't register the same email again |
+| Token expired (401) | Swagger Authorize → Logout → authorize again |
+| Admin endpoint forbidden (403) | GET /auth/me; confirm role and account |
+| Product images absent | Check image_url and actual uploaded file; GitHub source images alone are insufficient |
+| AWS catalogue empty | AWS DB is separate from local DB; migrate or create products |
+| Input repeats / unfinished `>` prompt | Ctrl+C in shell, paste one command once; use working PowerShell SSH if needed |
+
+## 13. Ending a work session and costs
+
+- To keep the website live: leave EC2 running; close laptop apps normally.
+- To take the demo offline: AWS Console → EC2 → Instance state → Stop instance. Do not choose Terminate for a temporary pause.
+- Stopping EC2 does not remove all possible costs: EBS storage and other retained resources can still incur charges.
+- After starting again, check the public IP, Docker service, containers, readiness, and swap.
+- Check Billing/Free Tier or credits and configure budget alerts. Do not assume this deployment is guaranteed free; alerts do not automatically stop spending.
+
+## 14. Remaining tasks
+
+- [ ] Confirm the new admin account exists and GET /auth/me reports admin.
+- [ ] Confirm the old exposed SSH key has been removed from authorized_keys after the new key works.
+- [ ] Transfer the local catalogue and uploaded images without overwriting AWS users/orders.
+- [ ] Configure domain and HTTPS using the project's deployment guide and HTTPS Compose file.
+- [ ] Verify database and image backups; test recovery separately.
+- [ ] Configure billing alerts and review credit usage.
+- [ ] Confirm swap behavior after reboot.
+- [ ] Complete one customer purchase and verify it as admin.
+
+## 15. Store this guide in Git
+
+Save this file on your laptop as `quickcart-backend/docs/aws-deployment.md`, replacing the old Ubuntu guide. Review the diff before committing.
+
+Windows PowerShell, after saving:
+
+```powershell
+cd "D:\AI_Career\Pillar_2_Portfolio_Projects\prodcution_e_commerce\quickcart-backend"
+git status
+git branch --show-current
+git add -- docs/aws-deployment.md
+git diff --cached --check
+git diff --cached --stat
+```
+
+Review staged files before committing; ensure only intended files are included:
+
+```powershell
+git commit -m "docs: align AWS guide with Amazon Linux deployment"
+git push
+```
+
+If push reports no upstream, follow the command Git suggests for the branch you intend to publish. These commands have not been run on your laptop by this guide.
+
+## 16. Test the deployed shop
+
+Use your SSH tunnel until HTTPS is configured when entering credentials. Swagger and the frontend access the same AWS database when both URLs point to this EC2 instance.
+
+1. Register a customer with a unique demo email; authorize it and run GET `/auth/me`.
+2. Register and promote a separate admin using section 8; verify its role.
+3. As admin, create a product and upload a JPEG, PNG, or WebP using POST `/admin/products/{product_id}/image` (the documented limit is 2 MB).
+4. Confirm the product and image appear in the frontend and GET `/products`.
+5. As customer, add stock-available products to the cart and inspect GET `/cart`.
+6. Use the frontend checkout form to provide the delivery address and Cash on Delivery payment method. If using Swagger, follow the currently deployed request schema; the old no-body checkout examples predate the new checkout fields.
+7. Confirm your order appears in the customer's order history, stock decreases, and the cart empties.
+8. As admin, confirm the same order appears in all orders. Verify any status/delete controls against the deployed Swagger definitions; their exact routes were not supplied in this session.
+
+A `confirmed` order with COD does not prove that money was collected. This project currently has no integrated online payment gateway. Delivery dates and order status should be interpreted according to the implemented application rules.
+
+## 17. HTTPS and future improvements
+
+HTTPS is not yet demonstrated as configured. The repository has `docker-compose.https.yml`; read it, its Caddy configuration, and required variables before enabling it. A typical next step is to point a domain at the current server, set `SITE_ADDRESS`, allow 443, and deploy the HTTPS stack. Do not blindly run a second service on port 80 alongside nginx's existing host binding.
+
+For this demo, the database and application share one server and disk. Future options include managed PostgreSQL with backups, shared object storage for images, centralized logs, and automated deployments. These are optional changes with their own costs and operational requirements, not prerequisites for understanding the current deployment.
 
 ## References
 
-- [AWS Free Tier: credits and account plans](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/free-tier.html)
-- [AWS Free Tier: choosing a plan](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/free-tier-plans.html)
-- [EC2 Free Tier eligible instance types](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-free-tier-usage.html)
-- [AWS public IPv4 address charge](https://aws.amazon.com/blogs/aws/new-aws-public-ipv4-address-charge-public-ip-insights)
-- [Install Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
+- Docker Compose manual plugin installation: https://docs.docker.com/compose/install/linux/#install-the-plugin-manually
+- AWS SSH troubleshooting: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/TroubleshootingInstancesConnecting.html
+- AWS stopping and starting EC2: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Stop_Start.html
+- AWS instance lifecycle and retained resource charges: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-lifecycle.html
+- Docker Compose restart behavior: https://docs.docker.com/reference/cli/docker/compose/restart/
+- Docker Compose up: https://docs.docker.com/reference/cli/docker/compose/up/
+
+Project-specific paths and settings come from the files and terminal output shared during your deployment. No passwords, tokens, or private key contents are included in this guide.

@@ -1,6 +1,12 @@
-# Local development stack.
-#   Only the databases (you run uvicorn --reload yourself):  docker compose up -d db redis
-#   The full stack, API included:                            docker compose up -d --build
+# Local development stack. Run every command from this folder (quickcart-backend).
+#   Only the databases (you run uvicorn and Vite yourself):  docker compose up -d db redis
+#   The full stack (database, Redis, API and frontend):      docker compose up -d --build
+#
+#   Shop (nginx + built React app):  http://localhost:8080
+#   API and Swagger, directly:       http://localhost:8000/docs
+#
+# Data lives in two named volumes, postgres_data and uploads_data. They survive
+# "docker compose down". Only "docker compose down -v" deletes them.
 
 services:
   db:
@@ -52,6 +58,18 @@ services:
         condition: service_healthy   # wait until PostgreSQL accepts connections
       redis:
         condition: service_healthy
+
+  web:
+    build: ./frontend
+    image: quickcart-web:local
+    container_name: quickcart-web
+    ports:
+      # Not 80: that port is used by the production stack (docker-compose.prod.yml).
+      # Not 5173: that one belongs to the Vite dev server (npm run dev).
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy   # nginx must be able to resolve and reach "api"
 
 volumes:
   postgres_data:
